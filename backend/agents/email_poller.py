@@ -20,7 +20,10 @@ def _decode(value) -> str:
         return value.decode("utf-8", errors="replace")
     decoded, enc = decode_header(value)[0]
     if isinstance(decoded, bytes):
-        return decoded.decode(enc or "utf-8", errors="replace")
+        try:
+            return decoded.decode(enc or "utf-8", errors="replace")
+        except (LookupError, TypeError):
+            return decoded.decode("latin-1", errors="replace")
     return decoded
 
 
