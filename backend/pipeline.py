@@ -76,6 +76,7 @@ async def run_pipeline(input: dict, broadcast=None) -> None:
         signal_type=signal_type,
         content=content,
         stream_callback=_make_broadcast_adapter(broadcast),
+        sender_email=input.get("sender_email", ""),
     )
 
 
@@ -112,7 +113,8 @@ def _make_broadcast_adapter(broadcast):
 # ---------------------------------------------------------------------------
 
 async def process_signal(signal_type: str, content: str,
-                         stream_callback=None) -> dict:
+                         stream_callback=None,
+                         sender_email: str = "") -> dict:
     """
     Full pipeline: transcribe → classify → memory → route → execute → ingest.
 
@@ -173,6 +175,7 @@ async def process_signal(signal_type: str, content: str,
         key_phrases=classification.key_phrases,
         sentiment=classification.sentiment,
         frequency=frequency,
+        sender_email=sender_email,
     ))
     action_types = [a.type for a in routing.actions]
     await emit("route",
@@ -238,27 +241,30 @@ async def process_signal(signal_type: str, content: str,
                        "success" if result.ok else "error")
 
         elif action.type == "email_reply":
-            await emit("system", "Drafting customer reply email...")
+            to_address = action.payload.get("to_address", "")
+            await emit("system", f"Drafting and sending reply email{' to ' + to_address if to_address else ''}...")
             try:
-                from integrations.email_reply import draft_reply, DraftReplyInput
-                reply = await draft_reply(DraftReplyInput(
-                    customer=classification.customer,
-                    company=classification.company,
-                    classification=classification.classification,
-                    original_text=text,
+                from integrations.email_reply import generate_and_send_reply
+                result_email = await generate_and_send_reply(
+                    classification_result=classification.model_dump() | {"text": text},
+                    to_address=to_address or os.environ.get("GMAIL_USER", ""),
                     actions_taken="; ".join(action_labels),
-                ))
+                )
                 actions_taken.append({
                     "type": "email_reply",
-                    "subject": reply.subject,
-                    "body": reply.body,
-                    "to": f"{reply.to_name} at {reply.to_company}",
+                    "subject": result_email["subject"],
+                    "body": result_email["body"],
+                    "to": result_email["to_address"],
+                    "sent": result_email["sent"],
                 })
+                status = "sent" if result_email["sent"] else "drafted (not sent)"
                 await emit("system",
-                           f"Reply drafted for {reply.to_name} — \"{reply.subject}\"",
-                           "success", {"subject": reply.subject, "body": reply.body})
+                           f"Reply {status} to {result_email['to_name']} — \"{result_email['subject']}\"",
+                           "success" if result_email["sent"] else "warning",
+                           {"subject": result_email["subject"], "body": result_email["body"],
+                            "sent": result_email["sent"]})
             except Exception as e:
-                await emit("system", f"Email draft failed: {e}", "error")
+                await emit("system", f"Email reply failed: {e}", "error")
 
         elif action.type == "digest":
             actions_taken.append({"type": "digest"})

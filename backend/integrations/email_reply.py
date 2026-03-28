@@ -1,11 +1,15 @@
 """
-email_reply.py — Draft customer reply emails via GPT-4o.
-Does NOT send email — returns a draft string for Person 2 to send via their email provider.
+email_reply.py — Draft and send customer reply emails via GPT-4o + Gmail SMTP.
 Used for CHURN_RISK signals where a human-sounding reply is needed immediately.
+
+Required env vars: GMAIL_USER, GMAIL_APP_PASSWORD
 """
 
 import os
 import json
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from pydantic import BaseModel
 from openai import OpenAI
 import railtracks as rt
@@ -87,13 +91,55 @@ async def draft_reply(input: DraftReplyInput) -> DraftReplyOutput:
     )
 
 
-async def generate_reply(classification_result: dict, actions_taken: str = "") -> dict:
-    """Convenience wrapper. Returns {'subject', 'body', 'to_name', 'to_company'}."""
-    result = await draft_reply(DraftReplyInput(
+def send_email(to_address: str, subject: str, body: str) -> bool:
+    """
+    Send an email via Gmail SMTP.
+    Returns True if sent successfully.
+    """
+    gmail_user = os.environ["GMAIL_USER"]
+    gmail_password = os.environ["GMAIL_APP_PASSWORD"].replace(" ", "")
+
+    msg = MIMEMultipart()
+    msg["From"] = f"Signal Agent <{gmail_user}>"
+    msg["To"] = to_address
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain"))
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(gmail_user, gmail_password)
+        server.send_message(msg)
+
+    return True
+
+
+async def generate_and_send_reply(classification_result: dict,
+                                   to_address: str,
+                                   actions_taken: str = "") -> dict:
+    """
+    Draft a reply via GPT-4o and send it via Gmail.
+    Returns draft dict with 'subject', 'body', 'sent', 'to_address'.
+    """
+    reply = await draft_reply(DraftReplyInput(
         customer=classification_result["customer"],
         company=classification_result["company"],
         classification=classification_result["classification"],
         original_text=classification_result["text"],
         actions_taken=actions_taken,
     ))
-    return result.model_dump()
+
+    sent = False
+    try:
+        send_email(to_address, reply.subject, reply.body)
+        sent = True
+        print(f"[email] Sent to {to_address} — {reply.subject}")
+    except Exception as e:
+        print(f"[email] Send failed ({e}), draft saved")
+
+    return {
+        "subject": reply.subject,
+        "body": reply.body,
+        "to_name": reply.to_name,
+        "to_company": reply.to_company,
+        "to_address": to_address,
+        "sent": sent,
+    }

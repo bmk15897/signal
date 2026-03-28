@@ -29,7 +29,8 @@ class RouterInput(BaseModel):
     text: str
     key_phrases: List[str]
     sentiment: str
-    frequency: int   # from Senso memory search
+    frequency: int        # from Senso memory search
+    sender_email: str = ""  # original sender's email address, if known
 
 
 class Action(BaseModel):
@@ -111,7 +112,9 @@ async def decide_actions(input: RouterInput) -> RouterOutput:
         actions.append(Action(type="slack", payload={
             "channel_hint": "#cs-team",
         }))
-        actions.append(Action(type="email_reply", payload={}))
+        actions.append(Action(type="email_reply", payload={
+            "to_address": input.sender_email,
+        }))
 
     # Everything except QUESTION goes to digest
     if c != "QUESTION":
