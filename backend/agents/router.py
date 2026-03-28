@@ -111,6 +111,7 @@ async def decide_actions(input: RouterInput) -> RouterOutput:
         actions.append(Action(type="slack", payload={
             "channel_hint": "#cs-team",
         }))
+        actions.append(Action(type="email_reply", payload={}))
 
     # Everything except QUESTION goes to digest
     if c != "QUESTION":

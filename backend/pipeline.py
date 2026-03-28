@@ -237,6 +237,29 @@ async def process_signal(signal_type: str, content: str,
                        f"Alert sent to {channel}" if result.ok else "Slack failed",
                        "success" if result.ok else "error")
 
+        elif action.type == "email_reply":
+            await emit("system", "Drafting customer reply email...")
+            try:
+                from integrations.email_reply import draft_reply, DraftReplyInput
+                reply = await draft_reply(DraftReplyInput(
+                    customer=classification.customer,
+                    company=classification.company,
+                    classification=classification.classification,
+                    original_text=text,
+                    actions_taken="; ".join(action_labels),
+                ))
+                actions_taken.append({
+                    "type": "email_reply",
+                    "subject": reply.subject,
+                    "body": reply.body,
+                    "to": f"{reply.to_name} at {reply.to_company}",
+                })
+                await emit("system",
+                           f"Reply drafted for {reply.to_name} — \"{reply.subject}\"",
+                           "success", {"subject": reply.subject, "body": reply.body})
+            except Exception as e:
+                await emit("system", f"Email draft failed: {e}", "error")
+
         elif action.type == "digest":
             actions_taken.append({"type": "digest"})
 
@@ -244,7 +267,7 @@ async def process_signal(signal_type: str, content: str,
     await emit("senso", "Storing signal in memory...")
     actions_summary = "; ".join(
         f"{a['type']}:{a.get('ticket_key') or a.get('page_id', '')}"
-        for a in actions_taken if a["type"] not in ("senso", "digest")
+        for a in actions_taken if a["type"] not in ("senso", "digest", "email_reply")
     ) or "none"
 
     senso_result = await ingest_signal(IngestInput(
