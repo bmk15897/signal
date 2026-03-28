@@ -40,6 +40,12 @@ services:
       - key: UNKEY_ROOT_KEY
         scope: RUN_TIME
         type: SECRET
+      - key: UNKEY_API_ID
+        scope: RUN_TIME
+        type: SECRET
+      - key: GEMINI_API_KEY
+        scope: RUN_TIME
+        type: SECRET
       - key: DEMO_TEST_EVENTS
         scope: RUN_TIME
         value: "false"
