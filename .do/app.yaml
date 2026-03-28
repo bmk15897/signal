@@ -2,7 +2,7 @@ name: signal-agent
 
 services:
   - name: backend
-    source_dir: /backend
+    source_dir: backend
     dockerfile_path: backend/Dockerfile
     github:
       branch: main
@@ -48,7 +48,7 @@ services:
         value: ${frontend.PUBLIC_URL}
 
   - name: frontend
-    source_dir: /frontend
+    source_dir: frontend
     dockerfile_path: frontend/Dockerfile
     github:
       branch: main
