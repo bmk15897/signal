@@ -2,13 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+const BACKEND_URL =
+  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8080";
+
 type Digest = {
+  markdown: string;
   generated_at: string;
-  summary: string;
-  signal_counts: Record<string, number>;
-  top_themes: string[];
-  churn_risks: string[];
-  actions_taken: number;
+  signal_count: number;
 };
 
 export function DigestPanel() {
@@ -20,7 +20,7 @@ export function DigestPanel() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("http://localhost:8080/digest");
+      const res = await fetch(`${BACKEND_URL}/digest`);
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const data = await res.json();
       setDigest(data);
@@ -38,7 +38,7 @@ export function DigestPanel() {
   }, [fetchDigest]);
 
   return (
-    <div className="flex flex-col gap-3 p-4 border border-zinc-800 rounded-lg bg-zinc-900/50">
+    <div className="flex flex-col gap-2 p-4 border border-zinc-800 rounded-lg bg-zinc-900/50">
       <div className="flex items-center justify-between">
         <span className="text-zinc-200 font-semibold text-sm">CEO Digest</span>
         <button
@@ -50,48 +50,21 @@ export function DigestPanel() {
       </div>
 
       {error && (
-        <p className="text-red-400 text-xs">Backend not reachable: {error}</p>
+        <p className="text-red-400 text-xs">Unavailable: {error}</p>
       )}
 
       {!digest && !error && !loading && (
-        <p className="text-zinc-600 text-xs">No digest yet.</p>
+        <p className="text-zinc-600 text-xs">No signals processed yet.</p>
       )}
 
       {digest && (
         <>
-          <p className="text-zinc-400 text-xs leading-relaxed">
-            {digest.summary}
-          </p>
-
-          {digest.signal_counts &&
-            Object.keys(digest.signal_counts).length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {Object.entries(digest.signal_counts).map(([type, count]) => (
-                  <span
-                    key={type}
-                    className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700"
-                  >
-                    {type} × {count}
-                  </span>
-                ))}
-              </div>
-            )}
-
-          {digest.churn_risks?.length > 0 && (
-            <div className="flex flex-col gap-1">
-              <span className="text-red-400 text-xs font-medium">
-                Churn risks
-              </span>
-              {digest.churn_risks.map((r, i) => (
-                <span key={i} className="text-zinc-500 text-xs pl-2">
-                  • {r}
-                </span>
-              ))}
-            </div>
-          )}
-
-          <p className="text-zinc-600 text-[10px]">
-            {digest.actions_taken ?? 0} actions taken ·{" "}
+          {/* Render markdown as plain pre-formatted text — readable without a parser */}
+          <pre className="text-zinc-400 text-[11px] leading-relaxed whitespace-pre-wrap font-sans">
+            {digest.markdown}
+          </pre>
+          <p className="text-zinc-600 text-[10px] border-t border-zinc-800 pt-2">
+            {digest.signal_count ?? 0} signals ·{" "}
             {digest.generated_at
               ? new Date(digest.generated_at).toLocaleString()
               : ""}

@@ -51,7 +51,8 @@ export function ActivityFeed() {
     let retryDelay = 1000;
 
     function connect() {
-      const es = new EventSource(`${BACKEND_URL}/alerts/stream`);
+      // Use Next.js proxy (/api/stream) — avoids WSL2 cross-origin SSE issues
+      const es = new EventSource(`/api/stream`);
       esRef.current = es;
 
       es.onopen = () => {

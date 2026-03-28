@@ -12,18 +12,24 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import AsyncGenerator
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+
+# Load .env from project root before anything else touches env vars
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 # Make `from agents.xxx import` work when uvicorn is launched from project root
 sys.path.insert(0, os.path.dirname(__file__))
 
 # ---------------------------------------------------------------------------
-# In-process SSE broadcast bus
+# In-process SSE broadcast bus + recent event buffer
 # ---------------------------------------------------------------------------
 
 _sse_queues: list[asyncio.Queue] = []
+_event_buffer: list[dict] = []   # last 50 events, replayed to new clients
+_BUFFER_SIZE = 50
 
 
 def broadcast(event: dict) -> None:
@@ -33,6 +39,11 @@ def broadcast(event: dict) -> None:
         "timestamp": datetime.utcnow().isoformat() + "Z",
         **event,
     }
+    # Keep a rolling buffer so new clients can see recent events
+    _event_buffer.append(payload)
+    if len(_event_buffer) > _BUFFER_SIZE:
+        _event_buffer.pop(0)
+
     for q in list(_sse_queues):
         try:
             q.put_nowait(payload)
@@ -110,6 +121,10 @@ async def _sse_stream(queue: asyncio.Queue, request: Request) -> AsyncGenerator[
     }
     yield f"event: activity\ndata: {json.dumps(hello)}\n\n"
 
+    # Replay recent events so the feed is populated even if pipeline already ran
+    for past_event in list(_event_buffer):
+        yield f"event: activity\ndata: {json.dumps(past_event)}\n\n"
+
     try:
         while True:
             if await request.is_disconnected():
@@ -148,9 +163,27 @@ async def alerts_stream(request: Request):
     )
 
 
+def _run_pipeline_task(coro):
+    """Create a task that logs exceptions to the activity feed instead of swallowing them."""
+    async def wrapper():
+        try:
+            await coro
+        except Exception as e:
+            import traceback
+            broadcast({
+                "stage": "SYSTEM",
+                "type": "error",
+                "message": f"Pipeline error: {e}",
+                "meta": {"traceback": traceback.format_exc()[-300:]},
+            })
+            print(f"[pipeline] ERROR: {traceback.format_exc()}")
+    asyncio.create_task(wrapper())
+
+
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)):
     """Receive an audio file and trigger the signal pipeline."""
+    import base64
     contents = await file.read()
 
     broadcast({
@@ -161,18 +194,13 @@ async def upload(file: UploadFile = File(...)):
 
     try:
         from pipeline import run_pipeline  # noqa: PLC0415
-        asyncio.create_task(
-            run_pipeline(
-                {"type": "audio", "content": contents, "filename": file.filename},
-                broadcast=broadcast,
-            )
-        )
-    except Exception as e:
-        broadcast({
-            "stage": "SYSTEM",
-            "type": "error",
-            "message": f"Pipeline error: {e}",
-        })
+        # Pipeline expects base64-encoded string for audio type
+        _run_pipeline_task(run_pipeline(
+            {"type": "audio", "content": base64.b64encode(contents).decode(), "filename": file.filename},
+            broadcast=broadcast,
+        ))
+    except ImportError as e:
+        broadcast({"stage": "SYSTEM", "type": "error", "message": f"Import error: {e}"})
 
     return {"status": "accepted", "filename": file.filename}
 
@@ -190,14 +218,12 @@ async def webhook_email(request: Request):
 
     try:
         from pipeline import run_pipeline  # noqa: PLC0415
-        asyncio.create_task(
-            run_pipeline(
-                {"type": "email", "content": body.get("text", ""), "raw": body},
-                broadcast=broadcast,
-            )
-        )
-    except Exception as e:
-        broadcast({"stage": "SYSTEM", "type": "error", "message": f"Pipeline error: {e}"})
+        _run_pipeline_task(run_pipeline(
+            {"type": "email", "content": body.get("text", ""), "raw": body},
+            broadcast=broadcast,
+        ))
+    except ImportError as e:
+        broadcast({"stage": "SYSTEM", "type": "error", "message": f"Import error: {e}"})
 
     return {"status": "accepted"}
 
@@ -215,14 +241,12 @@ async def monitor(request: Request):
 
     try:
         from pipeline import run_pipeline  # noqa: PLC0415
-        asyncio.create_task(
-            run_pipeline(
-                {"type": "email", "content": body.get("text", ""), "raw": body},
-                broadcast=broadcast,
-            )
-        )
-    except Exception as e:
-        broadcast({"stage": "SYSTEM", "type": "error", "message": f"Pipeline error: {e}"})
+        _run_pipeline_task(run_pipeline(
+            {"type": body.get("type", "email"), "content": body.get("text", body.get("content", "")), "raw": body},
+            broadcast=broadcast,
+        ))
+    except ImportError as e:
+        broadcast({"stage": "SYSTEM", "type": "error", "message": f"Import error: {e}"})
 
     return {"status": "accepted"}
 
@@ -249,16 +273,13 @@ async def search_signals(q: str = Query(..., description="Search query")):
 async def get_digest():
     """Return the current CEO digest."""
     try:
-        from agents.digest import get_current_digest  # noqa: PLC0415
-        return await get_current_digest()
-    except ImportError:
+        from agents.digest import generate_digest  # noqa: PLC0415
+        return generate_digest()
+    except Exception as e:
         return {
+            "markdown": f"Digest unavailable: {e}",
             "generated_at": datetime.utcnow().isoformat() + "Z",
-            "summary": "No signals processed yet.",
-            "signal_counts": {},
-            "top_themes": [],
-            "churn_risks": [],
-            "actions_taken": 0,
+            "signal_count": 0,
         }
 
 

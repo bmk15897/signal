@@ -1,4 +1,4 @@
-import { openai } from "@ai-sdk/openai";
+import { anthropic } from "@ai-sdk/anthropic";
 import { frontendTools } from "@assistant-ui/react-ai-sdk";
 import {
   JSONSchema7,
@@ -15,7 +15,7 @@ const BACKEND_URL =
 const SYSTEM = `You are the Signal intelligence assistant — a CEO-facing tool that answers
 questions about customer signal trends processed by the Signal Agent.
 
-You have access to a searchSignals tool that queries the Senso knowledge base where all
+You have access to a searchSignals tool that queries the knowledge base where all
 processed customer signals are stored. Use it to answer questions about:
 - Recurring bugs or issues
 - Top feature requests
@@ -44,7 +44,7 @@ export async function POST(req: Request) {
   } = await req.json();
 
   const result = streamText({
-    model: openai("gpt-4o"),
+    model: anthropic("claude-sonnet-4-5"),
     messages: await convertToModelMessages(messages),
     system: system ?? SYSTEM,
     stopWhen: stepCountIs(3),
@@ -52,7 +52,7 @@ export async function POST(req: Request) {
       ...frontendTools(clientTools ?? {}),
       searchSignals: {
         description:
-          "Search the Senso knowledge base for customer signals. Use this to answer questions about bugs, feature requests, churn risks, and trends.",
+          "Search the knowledge base for customer signals. Use this to answer questions about bugs, feature requests, churn risks, and trends.",
         inputSchema: searchSchema,
         execute: async (input: z.infer<typeof searchSchema>) => {
           try {
@@ -63,11 +63,7 @@ export async function POST(req: Request) {
               return { error: `Search failed: ${res.statusText}`, results: [] };
             return await res.json();
           } catch (err) {
-            return {
-              error: `Backend unreachable: ${err}`,
-              results: [],
-              frequency: 0,
-            };
+            return { error: `Backend unreachable: ${err}`, results: [], frequency: 0 };
           }
         },
       },
