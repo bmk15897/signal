@@ -94,9 +94,12 @@ async def gemini_process(input: GeminiInput) -> GeminiOutput:
             tmp_path = f.name
 
         try:
-            uploaded = client.files.upload(file=tmp_path)
+            uploaded = client.files.upload(
+                file=tmp_path,
+                config=types.UploadFileConfig(mime_type="audio/mpeg"),
+            )
             contents = [
-                types.Part.from_uri(file_uri=uploaded.uri, mime_type="audio/mp3"),
+                types.Part.from_uri(file_uri=uploaded.uri, mime_type=uploaded.mime_type),
                 types.Part.from_text(text=
                     "Transcribe this customer call recording and classify the signal. " + SYSTEM_PROMPT
                 ),
