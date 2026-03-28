@@ -89,6 +89,63 @@ signal-agent/
 
 ---
 
+## Person 1 — Pull & Run Instructions (updated Mar 28)
+
+After pulling, Person 1 needs to do the following on their machine:
+
+### First time setup
+```bash
+git pull
+python3 -m venv .venv
+.venv/bin/pip install -r backend/requirements.txt
+```
+
+### Run the backend
+```bash
+cd /path/to/signal
+.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8080 --reload
+```
+
+### Integrate the pipeline with the activity feed
+
+`main.py` already handles `/upload`, `/webhook/email`, and `/monitor`. It will automatically
+call your pipeline once `backend/pipeline.py` exists. All you need:
+
+**1. Define `run_pipeline` in `backend/pipeline.py`:**
+```python
+async def run_pipeline(input: dict, broadcast=None) -> None:
+    # input: {"type": "audio"|"email", "content": bytes|str, ...}
+    # call broadcast() at each stage to stream events to the frontend feed
+    ...
+```
+
+**2. Call `broadcast` at each pipeline stage to stream live events:**
+```python
+# broadcast signature — call it anywhere in your pipeline
+broadcast({"stage": "TRANSCRIBE", "type": "info",    "message": "Transcribing audio…"})
+broadcast({"stage": "CLASSIFY",   "type": "success", "message": "BUG detected, urgency 8",
+           "meta": {"customer": "Jane", "company": "Acme"}})
+broadcast({"stage": "JIRA",       "type": "success", "message": "Ticket ENG-42 created",
+           "meta": {"url": "https://yourco.atlassian.net/browse/ENG-42"}})
+```
+
+Valid `stage` values (each has its own color in the UI):
+`TRANSCRIBE` `CLASSIFY` `MEMORY` `ROUTE` `JIRA` `NOTION` `SLACK` `DIGEST` `SYSTEM`
+
+Valid `type` values: `info` `success` `warning` `error`
+
+**3. Once your pipeline is wired, turn off demo events** — add to `.env`:
+```
+DEMO_TEST_EVENTS=false
+```
+
+### .env — copy from teammate, never commit
+The `.env` file is gitignored. Get a copy from Person 2 with the real API keys filled in.
+Required keys: `OPENAI_API_KEY`, `SENSO_API_KEY`, `JIRA_API_TOKEN`, `NOTION_API_KEY`,
+`SLACK_WEBHOOK_URL`.
+
+---
+
 ## The Core Pipeline
 
 ```
