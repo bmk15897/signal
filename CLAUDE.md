@@ -173,6 +173,19 @@ Event shape:
 }
 ```
 
+### Start the email poller (reads Gmail inbox every 30s)
+
+Add to your FastAPI startup in `main.py`:
+```python
+from agents.email_poller import start_poller
+
+@app.on_event("startup")
+async def startup():
+    asyncio.create_task(start_poller(broadcast=broadcast))
+```
+
+This watches `bmk15897@gmail.com` for new unread emails received today and feeds each one into the pipeline automatically. No webhook needed.
+
 ### Turn off demo events once pipeline is wired
 Add to `.env`:
 ```
