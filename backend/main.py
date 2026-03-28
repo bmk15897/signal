@@ -6,14 +6,18 @@ Person 2 owns this file (API routes and webhook receivers only).
 import asyncio
 import json
 import os
+import sys
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, File, Request, UploadFile
+from fastapi import FastAPI, File, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+
+# Make `from agents.xxx import` work when uvicorn is launched from project root
+sys.path.insert(0, os.path.dirname(__file__))
 
 # ---------------------------------------------------------------------------
 # In-process SSE broadcast bus
@@ -37,8 +41,8 @@ def broadcast(event: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test event loop — fires every 5 s so the feed is visible before the
-# real pipeline is wired up.  Disable by setting DEMO_TEST_EVENTS=false.
+# Demo test event loop — cycles through fake pipeline events every 5s.
+# Enabled by default; disable with DEMO_TEST_EVENTS=false in .env.
 # ---------------------------------------------------------------------------
 
 _TEST_SEQUENCE = [
@@ -48,7 +52,7 @@ _TEST_SEQUENCE = [
     {"stage": "CLASSIFY",   "type": "success", "message": "Classification complete",
      "meta": {"type": "BUG", "urgency": "8", "customer": "Jane Smith", "company": "Acme Corp"}},
     {"stage": "MEMORY",     "type": "info",    "message": "Searching Senso for similar signals…"},
-    {"stage": "MEMORY",     "type": "warning", "message": "4 similar signals found from other customers",
+    {"stage": "MEMORY",     "type": "warning", "message": "4 similar signals found",
      "meta": {"frequency": "4"}},
     {"stage": "ROUTE",      "type": "info",    "message": "Routing: BUG urgency=8 + freq=4 → P1 Jira + Slack"},
     {"stage": "JIRA",       "type": "success", "message": "P1 Bug ticket created",
@@ -59,11 +63,10 @@ _TEST_SEQUENCE = [
 
 
 async def _test_event_loop() -> None:
-    """Cycle through demo events every 5 seconds."""
-    await asyncio.sleep(2)  # brief startup delay
+    await asyncio.sleep(2)
     idx = 0
     while True:
-        if _sse_queues:  # only fire when someone is connected
+        if _sse_queues:
             broadcast(_TEST_SEQUENCE[idx % len(_TEST_SEQUENCE)])
             idx += 1
         await asyncio.sleep(5)
@@ -75,7 +78,7 @@ async def _test_event_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    demo = os.environ.get("DEMO_TEST_EVENTS", "true").lower() != "false"
+    demo = os.environ.get("DEMO_TEST_EVENTS", "false").lower() != "false"
     task = asyncio.create_task(_test_event_loop()) if demo else None
     yield
     if task:
@@ -98,7 +101,6 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 
 async def _sse_stream(queue: asyncio.Queue, request: Request) -> AsyncGenerator[str, None]:
-    # Connected heartbeat
     hello = {
         "id": str(uuid.uuid4()),
         "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -110,7 +112,6 @@ async def _sse_stream(queue: asyncio.Queue, request: Request) -> AsyncGenerator[
 
     try:
         while True:
-            # Also check if the client has disconnected
             if await request.is_disconnected():
                 break
             try:
@@ -159,18 +160,18 @@ async def upload(file: UploadFile = File(...)):
     })
 
     try:
-        from backend.pipeline import run_pipeline  # noqa: PLC0415
+        from pipeline import run_pipeline  # noqa: PLC0415
         asyncio.create_task(
             run_pipeline(
                 {"type": "audio", "content": contents, "filename": file.filename},
                 broadcast=broadcast,
             )
         )
-    except ImportError:
+    except Exception as e:
         broadcast({
             "stage": "SYSTEM",
-            "type": "warning",
-            "message": "Pipeline not yet wired — file received, standing by",
+            "type": "error",
+            "message": f"Pipeline error: {e}",
         })
 
     return {"status": "accepted", "filename": file.filename}
@@ -188,19 +189,15 @@ async def webhook_email(request: Request):
     })
 
     try:
-        from backend.pipeline import run_pipeline  # noqa: PLC0415
+        from pipeline import run_pipeline  # noqa: PLC0415
         asyncio.create_task(
             run_pipeline(
                 {"type": "email", "content": body.get("text", ""), "raw": body},
                 broadcast=broadcast,
             )
         )
-    except ImportError:
-        broadcast({
-            "stage": "SYSTEM",
-            "type": "warning",
-            "message": "Pipeline not yet wired — email received, standing by",
-        })
+    except Exception as e:
+        broadcast({"stage": "SYSTEM", "type": "error", "message": f"Pipeline error: {e}"})
 
     return {"status": "accepted"}
 
@@ -217,28 +214,42 @@ async def monitor(request: Request):
     })
 
     try:
-        from backend.pipeline import run_pipeline  # noqa: PLC0415
+        from pipeline import run_pipeline  # noqa: PLC0415
         asyncio.create_task(
             run_pipeline(
                 {"type": "email", "content": body.get("text", ""), "raw": body},
                 broadcast=broadcast,
             )
         )
-    except ImportError:
-        broadcast({
-            "stage": "SYSTEM",
-            "type": "warning",
-            "message": "Pipeline not yet wired — trigger received, standing by",
-        })
+    except Exception as e:
+        broadcast({"stage": "SYSTEM", "type": "error", "message": f"Pipeline error: {e}"})
 
     return {"status": "accepted"}
+
+
+@app.get("/search")
+async def search_signals(q: str = Query(..., description="Search query")):
+    """Search Senso KB — used by the CEO chat assistant."""
+    try:
+        from agents.memory import search_memory, SearchInput  # noqa: PLC0415
+        result = await search_memory(SearchInput(
+            key_phrases=q.split()[:5],
+            classification="",
+        ))
+        return {
+            "query": q,
+            "frequency": result.frequency,
+            "results": result.related_signals,
+        }
+    except Exception as e:
+        return {"query": q, "frequency": 0, "results": [], "error": str(e)}
 
 
 @app.get("/digest")
 async def get_digest():
     """Return the current CEO digest."""
     try:
-        from backend.agents.digest import get_current_digest  # noqa: PLC0415
+        from agents.digest import get_current_digest  # noqa: PLC0415
         return await get_current_digest()
     except ImportError:
         return {
