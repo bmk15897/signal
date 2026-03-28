@@ -3,11 +3,10 @@ name: signal-agent
 services:
   - name: backend
     source_dir: /backend
+    dockerfile_path: backend/Dockerfile
     github:
       branch: main
       deploy_on_push: true
-    build_command: pip install -r requirements.txt
-    run_command: uvicorn main:app --host 0.0.0.0 --port 8080
     http_port: 8080
     instance_size_slug: basic-xxs
     envs:
@@ -41,9 +40,6 @@ services:
       - key: UNKEY_ROOT_KEY
         scope: RUN_TIME
         type: SECRET
-      - key: UNKEY_API_ID
-        scope: RUN_TIME
-        type: SECRET
       - key: DEMO_TEST_EVENTS
         scope: RUN_TIME
         value: "false"
@@ -53,18 +49,17 @@ services:
 
   - name: frontend
     source_dir: /frontend
+    dockerfile_path: frontend/Dockerfile
     github:
       branch: main
       deploy_on_push: true
-    build_command: npm install && npm run build
-    run_command: npm start
     http_port: 3000
     instance_size_slug: basic-xxs
     envs:
-      - key: OPENAI_API_KEY
+      - key: ANTHROPIC_API_KEY
         scope: RUN_TIME
         type: SECRET
-      - key: ANTHROPIC_API_KEY
+      - key: OPENAI_API_KEY
         scope: RUN_TIME
         type: SECRET
       - key: NEXT_PUBLIC_BACKEND_URL
